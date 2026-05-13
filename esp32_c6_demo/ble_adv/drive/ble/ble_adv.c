@@ -52,7 +52,8 @@ static volatile ble_state_t s_ble_state = BLE_STATE_READY;
 
 static const char *ble_state_to_str(ble_state_t state)
 {
-    switch (state) {
+    switch (state)
+    {
     case BLE_STATE_READY:
         return "就绪态";
     case BLE_STATE_INITIATING:
@@ -74,12 +75,16 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
 
-    switch (event->type) {
+    switch (event->type)
+    {
     case BLE_GAP_EVENT_CONNECT:
-        if (event->connect.status == 0) {
+        if (event->connect.status == 0)
+        {
             s_ble_state = BLE_STATE_CONNECTED;
             ESP_LOGI(TAG, "BLE GAP event: connected, state=%s", ble_state_to_str(s_ble_state));
-        } else {
+        }
+        else
+        {
             s_ble_state = BLE_STATE_READY;
             ESP_LOGW(TAG, "BLE GAP event: connect failed(status=%d), fallback to %s",
                      event->connect.status, ble_state_to_str(s_ble_state));
@@ -110,7 +115,8 @@ static void ble_status_task(void *pvParameters)
 {
     (void)pvParameters;
 
-    while (1) {
+    while (1)
+    {
         ESP_LOGI(TAG, "BLE state machine: %s, addr_type=%u",
                  ble_state_to_str((ble_state_t)s_ble_state),
                  (unsigned int)s_ble_addr_type);
@@ -135,7 +141,8 @@ static void ble_start_advertising(void)
     fields.name_is_complete = 1;
 
     int rc = ble_gap_adv_set_fields(&fields);
-    if (rc != 0) {
+    if (rc != 0)
+    {
         ESP_LOGE(TAG, "ble_gap_adv_set_fields failed, rc=%d", rc);
         return;
     }
@@ -148,7 +155,8 @@ static void ble_start_advertising(void)
 
     // BLE_HS_FOREVER 表示持续广播，直到你主动停止或系统重启。
     rc = ble_gap_adv_start(s_ble_addr_type, NULL, BLE_HS_FOREVER, &adv_params, ble_gap_event_cb, NULL);
-    if (rc != 0) {
+    if (rc != 0)
+    {
         ESP_LOGE(TAG, "ble_gap_adv_start failed, rc=%d", rc);
         s_ble_state = BLE_STATE_READY;
         return;
@@ -163,7 +171,8 @@ static void ble_on_sync(void)
     // sync 回调表示：NimBLE Host 已经与 Controller 完成同步，
     // 这时才能安全地推断地址类型并真正启动广播。
     int rc = ble_hs_id_infer_auto(0, &s_ble_addr_type);
-    if (rc != 0) {
+    if (rc != 0)
+    {
         ESP_LOGE(TAG, "ble_hs_id_infer_auto failed, rc=%d", rc);
         return;
     }
@@ -186,7 +195,8 @@ static void ble_adv_task(void *pvParameters)
 
     // NVS 用于保存蓝牙/PHY等运行参数，是 BLE 启动的基础依赖。
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
         // 当 NVS 分区版本不匹配或空间异常时，擦除后重建。
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
@@ -202,7 +212,8 @@ static void ble_adv_task(void *pvParameters)
 
     // 设置 GAP 设备名。很多扫描工具会读取并显示这个名称。
     int rc = ble_svc_gap_device_name_set("Kiana");
-    if (rc != 0) {
+    if (rc != 0)
+    {
         ESP_LOGE(TAG, "ble_svc_gap_device_name_set failed, rc=%d", rc);
     }
 
@@ -214,7 +225,8 @@ static void ble_adv_task(void *pvParameters)
     // 状态任务单独打印 BLE 运行状态，方便你在串口里观察系统是否正常。
     s_ble_state = BLE_STATE_READY;
     BaseType_t status_task_created = xTaskCreate(ble_status_task, "ble_status_task", 3072, NULL, 4, NULL);
-    if (status_task_created != pdPASS) {
+    if (status_task_created != pdPASS)
+    {
         ESP_LOGE(TAG, "Failed to create ble_status_task");
     }
 
@@ -228,7 +240,8 @@ esp_err_t ble_adv_start_task(void)
 #if CONFIG_BT_ENABLED
     // 对外提供的入口：由 app_main 调用，启动 BLE 初始化任务。
     BaseType_t created = xTaskCreate(ble_adv_task, "ble_adv_task", 6144, NULL, 5, NULL);
-    if (created != pdPASS) {
+    if (created != pdPASS)
+    {
         ESP_LOGE(TAG, "Failed to create ble_adv_task");
         return ESP_FAIL;
     }
