@@ -1,0 +1,26 @@
+# ESP-IDF and CMake build outputs
+**/build/
+**/CMakeFiles/
+**/cmake_install.cmake
+**/compile_commands.json
+**/CMakeCache.txt
+**/build.ninja
+
+# ESP-IDF generated configs (keep defaults templates)
+**/sdkconfig*
+!**/sdkconfig.defaults
+
+# Downloaded/generated component cache
+**/managed_components/
+**/.idf/
+
+# Editor and OS files
+.vscode/
+**/.vscode/
+.DS_Store
+*.swp
+
+# Logs and temporary files
+**/log/
+*.log
+*.tmp
