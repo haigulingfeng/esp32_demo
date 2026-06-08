@@ -12,6 +12,11 @@ static void *s_button_callback_arg;
 static bool s_isr_service_installed;
 static bool s_button_initialized;
 
+/**
+ * @brief GPIO 中断服务入口。
+ *
+ * @param arg 保留参数，当前实现未使用。
+ */
 static void IRAM_ATTR button_gpio_isr_handler(void *arg)
 {
     (void)arg;
@@ -22,6 +27,14 @@ static void IRAM_ATTR button_gpio_isr_handler(void *arg)
     }
 }
 
+/**
+ * @brief 初始化按键 GPIO 输入模式并注册下降沿中断回调。
+ *
+ * @param callback 中断触发后的用户回调。
+ * @param callback_arg 传递给回调函数的私有上下文。
+ *
+ * @return ESP_OK 表示成功，其他错误码表示初始化失败。
+ */
 esp_err_t button_gpio_init(button_gpio_callback_t callback, void *callback_arg)
 {
     // GPIO2 配置为输入+上拉，并在下降沿触发中断（按下瞬间）。
@@ -68,12 +81,22 @@ esp_err_t button_gpio_init(button_gpio_callback_t callback, void *callback_arg)
     return ESP_OK;
 }
 
+/**
+ * @brief 读取按键 GPIO 当前电平值。
+ *
+ * @return 1 表示高电平，0 表示低电平。
+ */
 int button_gpio_get_level(void)
 {
     // 直接返回硬件电平：1=高，0=低。
     return gpio_get_level(BUTTON_GPIO_NUM);
 }
 
+/**
+ * @brief 判断按键是否处于按下状态。
+ *
+ * @return true 表示按下，false 表示未按下。
+ */
 bool button_gpio_is_pressed(void)
 {
     // 当前按键电路采用上拉输入，按下时拉低到 0。

@@ -9,8 +9,11 @@
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
+#include "host/ble_gatt.h"
+#include "host/ble_uuid.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "ws2812_led.h"
 #endif
 
 /*
@@ -49,7 +52,126 @@ typedef enum {
 } ble_state_t;
 
 static volatile ble_state_t s_ble_state = BLE_STATE_READY;
+static uint8_t s_led_on;
 
+#define BLE_LED_SERVICE_UUID16 0xFFF0
+#define BLE_LED_CHAR_UUID16    0xFFF1
+#define BLE_LED_ON_BRIGHTNESS  12
+
+/**
+ * @brief 根据 BLE 写入值更新本地 LED 状态。
+ *
+ * @param on 目标状态，0 表示关灯，非 0 表示开灯。
+ */
+static void ble_apply_led_state(uint8_t on)
+{
+    esp_err_t rc = ws2812_led_init();
+    if (rc != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ws2812_led_init failed, rc=%d", rc);
+        return;
+    }
+
+    if (on != 0)
+    {
+        rc = ws2812_led_set_rgb(0, 0, BLE_LED_ON_BRIGHTNESS);
+    }
+    else
+    {
+        rc = ws2812_led_set_rgb(0, 0, 0);
+    }
+
+    if (rc != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ws2812_led_set_rgb failed, rc=%d", rc);
+        return;
+    }
+
+    s_led_on = (on != 0) ? 1 : 0;
+    ESP_LOGI(TAG, "LED state updated from BLE: %s", s_led_on ? "ON" : "OFF");
+}
+
+/**
+ * @brief 自定义 LED 特征值访问回调，处理读写请求。
+ *
+ * @param conn_handle 当前连接句柄。
+ * @param attr_handle 当前属性句柄。
+ * @param ctxt GATT 访问上下文。
+ * @param arg 用户私有参数，当前未使用。
+ *
+ * @return 0 表示成功，其他值为 ATT 错误码。
+ */
+static int ble_led_char_access_cb(uint16_t conn_handle,
+                                  uint16_t attr_handle,
+                                  struct ble_gatt_access_ctxt *ctxt,
+                                  void *arg)
+{
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR)
+    {
+        int rc = os_mbuf_append(ctxt->om, &s_led_on, sizeof(s_led_on));
+        return (rc == 0) ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+
+    if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR)
+    {
+        uint8_t value = 0;
+        uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+        if (len != 1)
+        {
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+
+        int rc = ble_hs_mbuf_to_flat(ctxt->om, &value, sizeof(value), NULL);
+        if (rc != 0)
+        {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+
+        if ((value != 0) && (value != 1))
+        {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+
+        ble_apply_led_state(value);
+        return 0;
+    }
+
+    return BLE_ATT_ERR_UNLIKELY;
+}
+
+/*
+ * @brief 自定义 GATT 服务定义表。
+ *
+ * 包含一个主服务 0xFFF0 和一个读写特征值 0xFFF1，
+ * 用于远程控制板载 WS2812 灯的开关状态。
+ */
+static const struct ble_gatt_svc_def g_ble_gatt_svcs[] = {
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = BLE_UUID16_DECLARE(BLE_LED_SERVICE_UUID16),
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid = BLE_UUID16_DECLARE(BLE_LED_CHAR_UUID16),
+                .access_cb = ble_led_char_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+            },
+            {0},
+        },
+    },
+    {0},
+};
+
+/**
+ * @brief 将 BLE 状态枚举转换为可读字符串。
+ *
+ * @param state 当前状态机状态。
+ *
+ * @return 对应中文状态字符串。
+ */
 static const char *ble_state_to_str(ble_state_t state)
 {
     switch (state)
@@ -71,13 +193,21 @@ static const char *ble_state_to_str(ble_state_t state)
 
 static void ble_start_advertising(void);
 
+/**
+ * @brief GAP 事件回调，处理连接、断开和广播完成事件
+ *
+ * @param event GAP 事件对象
+ * @param arg 用户参数，当前未使用
+ *
+ * @return 0 表示事件已处理
+ */
 static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
 
     switch (event->type)
     {
-    case BLE_GAP_EVENT_CONNECT:
+    case BLE_GAP_EVENT_CONNECT: 
         if (event->connect.status == 0)
         {
             s_ble_state = BLE_STATE_CONNECTED;
@@ -111,6 +241,11 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
     }
 }
 
+/**
+ * @brief 周期打印 BLE 状态机信息，便于串口调试。
+ *
+ * @param pvParameters 任务参数，当前未使用。
+ */
 static void ble_status_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -124,6 +259,11 @@ static void ble_status_task(void *pvParameters)
     }
 }
 
+/**
+ * @brief 组装广告数据并启动可连接广播。
+ *
+ * 广播数据包含设备名和自定义服务 UUID。
+ */
 static void ble_start_advertising(void)
 {
     // GAP 广播参数：控制是否可连接、是否通用可发现等行为。
@@ -139,6 +279,11 @@ static void ble_start_advertising(void)
     fields.name = (const uint8_t *)"Kiana";
     fields.name_len = 5;
     fields.name_is_complete = 1;
+    // 将自定义服务 UUID 放入广播，nRF Connect 扫描时更容易识别到此设备用途。
+    ble_uuid16_t led_svc_uuid = BLE_UUID16_INIT(BLE_LED_SERVICE_UUID16);
+    fields.uuids16 = &led_svc_uuid;
+    fields.num_uuids16 = 1;
+    fields.uuids16_is_complete = 1;
 
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0)
@@ -166,6 +311,9 @@ static void ble_start_advertising(void)
     ESP_LOGI(TAG, "BLE advertising started. Device name: Kiana, state=%s", ble_state_to_str((ble_state_t)s_ble_state));
 }
 
+/**
+ * @brief NimBLE 同步回调，在 Host 同步后推断地址类型并启动广播。
+ */
 static void ble_on_sync(void)
 {
     // sync 回调表示：NimBLE Host 已经与 Controller 完成同步，
@@ -180,6 +328,11 @@ static void ble_on_sync(void)
     ble_start_advertising();
 }
 
+/**
+ * @brief NimBLE Host 任务入口，运行协议栈主循环。
+ *
+ * @param param 任务参数，当前未使用。
+ */
 static void ble_host_task(void *param)
 {
     (void)param;
@@ -189,6 +342,11 @@ static void ble_host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
+/**
+ * @brief BLE 初始化任务，完成 NVS/NimBLE/GATT 初始化并启动广播。
+ *
+ * @param pvParameters 任务参数，当前未使用。
+ */
 static void ble_adv_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -209,9 +367,23 @@ static void ble_adv_task(void *pvParameters)
     // GAP 负责连接、广播等“链路管理”；GATT 负责“数据服务模型”。
     ble_svc_gap_init();
     ble_svc_gatt_init();
+    int rc = ble_gatts_count_cfg(g_ble_gatt_svcs);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "ble_gatts_count_cfg failed, rc=%d", rc);
+        vTaskDelete(NULL);
+        return;
+    }
+    rc = ble_gatts_add_svcs(g_ble_gatt_svcs);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "ble_gatts_add_svcs failed, rc=%d", rc);
+        vTaskDelete(NULL);
+        return;
+    }
 
     // 设置 GAP 设备名。很多扫描工具会读取并显示这个名称。
-    int rc = ble_svc_gap_device_name_set("Kiana");
+    rc = ble_svc_gap_device_name_set("Kiana");
     if (rc != 0)
     {
         ESP_LOGE(TAG, "ble_svc_gap_device_name_set failed, rc=%d", rc);
@@ -235,6 +407,14 @@ static void ble_adv_task(void *pvParameters)
 }
 #endif
 
+/**
+ * @brief 启动 BLE 广播初始化任务。
+ *
+ * @return
+ *      - ESP_OK: 任务创建成功。
+ *      - ESP_FAIL: 任务创建失败。
+ *      - ESP_ERR_NOT_SUPPORTED: 当前未启用蓝牙配置。
+ */
 esp_err_t ble_adv_start_task(void)
 {
 #if CONFIG_BT_ENABLED

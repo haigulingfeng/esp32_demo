@@ -12,6 +12,11 @@ static led_strip_handle_t s_led_strip;
 // 防止重复初始化驱动，避免重复申请硬件资源。
 static bool s_initialized;
 
+/**
+ * @brief 初始化 WS2812 灯带驱动并清空显示。
+ *
+ * @return ESP_OK 表示成功，其他错误码表示底层初始化失败。
+ */
 esp_err_t ws2812_led_init(void)
 {
     // 灯带基础参数：GPIO、灯珠数量、芯片型号和颜色顺序。
@@ -56,6 +61,15 @@ esp_err_t ws2812_led_init(void)
     return ESP_OK;
 }
 
+/**
+ * @brief 设置第 1 颗 WS2812 灯珠颜色并立即刷新到硬件。
+ *
+ * @param red 红色分量亮度，范围 0-255。
+ * @param green 绿色分量亮度，范围 0-255。
+ * @param blue 蓝色分量亮度，范围 0-255。
+ *
+ * @return ESP_OK 表示成功，其他错误码表示写入或刷新失败。
+ */
 esp_err_t ws2812_led_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
 {
     // 未初始化时拒绝设置颜色，提醒调用顺序应先 init 再 set。
